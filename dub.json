@@ -1,0 +1,8 @@
+{
+	"authors": [
+		"azrai"
+	],
+	"description": "A minimal D application.",
+	"license": "proprietary",
+	"name": "vibed-nest-generator"
+}

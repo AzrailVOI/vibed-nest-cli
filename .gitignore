@@ -1,0 +1,17 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/vibed-nest-generator
+vibednest.exe
+vibed-nest-generator.so
+vibed-nest-generator.dylib
+vibed-nest-generator.dll
+vibed-nest-generator.a
+vibed-nest-generator.lib
+vibed-nest-generator-test-*
+*.exe
+*.pdb
+*.o
+*.obj
+*.lst
