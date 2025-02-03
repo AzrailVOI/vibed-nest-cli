@@ -1,8 +1,8 @@
 {
 	"authors": [
-		"azrai"
+		"AzrailVOI"
 	],
-	"description": "A minimal D application.",
-	"license": "proprietary",
-	"name": "vibed-nest-generator"
+	"description": "A simple CLI generator for vibed-nest framework",
+	"license": "MIT",
+	"name": "vibed-nest-cli"
 }
