@@ -9,16 +9,22 @@ import std.string : split;
 import std.range;
 import std.algorithm;
 
-/// Преобразует строку в PascalCase (например, "hello_world" -> "HelloWorld")
+/// Преобразует строку в PascalCase (например, "hello_world" -> "HelloWorld") с учётом разделителей '_' , ' ' и '.'
 string toPascalCase(string s)
 {
-    // Разбиваем строку по символам '_' и пробелу
-    auto parts = s.split!(c => c == '_' || c == ' ').array;
+    // Разбиваем строку по символам '_' , пробелу и '.'
+    auto parts = s.split!(c => c == '_' || c == ' ' || c == '.').array;
     string result;
     foreach (part; parts)
     {
         if (part.length > 0)
-            result ~= toUpper(part[0]) ~ toLower(part[1 .. $]);
+        {
+            // Если часть равна "ws" (без учёта регистра), выводим её полностью заглавными
+            if (toLower(part) == "ws")
+                result ~= "WS";
+            else
+                result ~= toUpper(part[0]) ~ toLower(part[1 .. $]);
+        }
     }
     return result;
 }
@@ -37,7 +43,7 @@ void main(string[] args)
     // Если параметры не заданы, выводим справку
     if (args.length < 2)
     {
-        writeln("Usage: generator <module_name> [crud|empty]");
+        writeln("Usage: generator <module_name> [crud|empty|ws]");
         return;
     }
 
@@ -76,13 +82,63 @@ void main(string[] args)
         writeln("Каталог для модуля уже существует: ", baseDir);
     }
 
-    // 1. Генерация файла контроллера: <moduleName>.controller.d
-    string controllerFile = buildPath(baseDir, moduleName ~ ".controller.d");
-    writeln("Генерация контроллера: ", controllerFile);
-    string controllerContent;
-    if (templateType == "crud")
+    // Определяем имена файлов для контроллера, сервиса и модуля в зависимости от шаблона.
+    string controllerFile, serviceFile, moduleFile;
+    if (templateType == "ws")
     {
-        // Шаблон с CRUD-методами (используем res.writeBody)
+        controllerFile = buildPath(baseDir, moduleName ~ ".ws.controller.d");
+        serviceFile    = buildPath(baseDir, moduleName ~ ".ws.service.d");
+        moduleFile     = buildPath(baseDir, moduleName ~ ".ws.mod.d");
+    }
+    else
+    {
+        controllerFile = buildPath(baseDir, moduleName ~ ".controller.d");
+        serviceFile    = buildPath(baseDir, moduleName ~ ".service.d");
+        moduleFile     = buildPath(baseDir, moduleName ~ ".mod.d");
+    }
+
+    // 1. Генерация файла контроллера
+    string controllerContent;
+    if (templateType == "ws")
+    {
+        // Шаблон для вебсокет-контроллера, использующий handleWebSockets согласно документации [&#8203;:contentReference[oaicite:1]{index=1}]
+        string controllerTemplate = q{
+module %s.%s.ws.controller;
+
+import vibe.http.websockets;
+import %s.%s.ws.service;
+import std.stdio;
+
+// Создаём общий (shared static) экземпляр сервиса для обработки сообщений
+shared static %sWSService wsService = new %sWSService();
+
+/// Обрабатывает соединение WebSocket (echo-сервер)
+void handleConn(scope WebSocket ws)
+{
+    writeln("WebSocket клиент подключен.");
+    while (ws.connected)
+    {
+        auto msg = ws.receiveText();
+        // Вызываем метод сервиса для обработки сообщения
+        auto response = wsService.processMessage(msg);
+        ws.send(response);
+    }
+    writeln("WebSocket клиент отключен.");
+}
+};
+
+        controllerContent = format(controllerTemplate,
+            moduleName,   // для первого %s в "module %s.%s.ws.controller;"
+            moduleName,   // для второго %s
+            moduleName,   // для первого %s в "import %s.%s.ws.service;"
+            moduleName,   // для второго %s
+            ModuleName,   // для первого %s в "shared static %sWSService ..."
+            ModuleName    // для второго %s в "... new %sWSService();"
+        );
+
+    }
+    else if (templateType == "crud")
+    {
         string controllerTemplate = q{
 module %s.%s.controller;
 
@@ -148,7 +204,6 @@ class %sController {
     }
     else if (templateType == "empty")
     {
-        // Пустой шаблон с комментариями и примером GET запроса
         string controllerTemplate = q{
 module %s.%s.controller;
 
@@ -176,11 +231,47 @@ class %sController {
     write(controllerFile, controllerContent);
     writeln("Файл контроллера создан: ", controllerFile);
 
-    // 2. Генерация файла сервиса: <moduleName>.service.d
-    string serviceFile = buildPath(baseDir, moduleName ~ ".service.d");
-    writeln("Генерация сервиса: ", serviceFile);
+    // 2. Генерация файла сервиса
     string serviceContent;
-    if (templateType == "crud")
+    if (templateType == "ws")
+    {
+        // Шаблон для вебсокет-сервиса
+        string serviceTemplate = q{
+module %s.%s.ws.service;
+import std.json;
+// Сервис для обработки логики WebSocket
+class %sWSService {
+    /// Пример обработки входящего сообщения
+    shared string processMessage(string msg) {
+        // Добавьте здесь логику обработки сообщения
+        /*
+        * Message example:
+        * {
+        * 	"type": "msg",
+        * 	"msg": {
+        * 		"text": "Lorem ipsum"
+        * 	}
+        * }
+        * */
+        try{
+            JSONValue jsonMsg = parseJSON(msg);
+
+            switch (jsonMsg["type"].str) {
+                case "msg":
+                    return "This is msg channel! Your message: " ~ jsonMsg["msg"].toString();
+                default:
+                    return "Incorrect type. Your type: " ~ jsonMsg["type"].str; // эхо-сообщение
+            }
+        } catch( Exception e)
+        {
+            return "This is not JSON object";
+        }
+    }
+}
+};
+        serviceContent = format(serviceTemplate, moduleName, moduleName, ModuleName);
+    }
+    else if (templateType == "crud")
     {
         string serviceTemplate = q{
 module %s.%s.service;
@@ -240,11 +331,44 @@ class %sService {
     write(serviceFile, serviceContent);
     writeln("Файл сервиса создан: ", serviceFile);
 
-    // 3. Генерация файла модуля: <moduleName>.mod.d (с суффиксом "mod" вместо "module")
-    string moduleFile = buildPath(baseDir, moduleName ~ ".mod.d");
-    writeln("Генерация модуля: ", moduleFile);
+    // 3. Генерация файла модуля
     string moduleContent;
-    if (templateType == "crud")
+    if (templateType == "ws")
+    {
+        // Шаблон для вебсокет-модуля с использованием handleWebSockets из vibe.http.websockets
+        string moduleTemplate = q{
+module %s.%s.ws.mod;
+
+import vibe.vibe;
+import vibe.http.websockets;
+import %s.%s.ws.controller;
+import %s.%s.ws.service;
+
+class %sWSModule {
+    private %sWSService wsService;
+
+    this() {
+        wsService = new %sWSService();
+    }
+
+    /// Регистрирует маршруты для модуля WebSocket
+    void registerRoutes(URLRouter router) {
+        router.get("/ws/%s", handleWebSockets(&handleConn));
+    }
+}
+};
+        moduleContent = format(
+            moduleTemplate,
+            moduleName, moduleName,        // module и подпакет ws.mod
+            moduleName, moduleName,        // импорт ws.controller
+            moduleName, moduleName,        // импорт ws.service
+            ModuleName,                    // имя класса (будет: <ModuleName>WSModule)
+            ModuleName,                    // для wsService
+            ModuleName,                    // создание wsService
+            moduleName                     // маршрут: /ws/<moduleName>
+        );
+    }
+    else if (templateType == "crud")
     {
         string moduleTemplate = q{
 module %s.%s.mod;
@@ -265,19 +389,19 @@ class %sModule {
     /// Регистрирует маршруты для модуля %s с CRUD методами
     void registerRoutes(URLRouter router) {
         router.get("/%s", (HTTPServerRequest req, HTTPServerResponse res) {
-            %s.getAll(req, res);
+            %sController.getAll(req, res);
         });
         router.get("/%s/:id", (HTTPServerRequest req, HTTPServerResponse res) {
-            %s.getOne(req, res);
+            %sController.getOne(req, res);
         });
         router.post("/%s", (HTTPServerRequest req, HTTPServerResponse res) {
-            %s.create(req, res);
+            %sController.create(req, res);
         });
         router.put("/%s/:id", (HTTPServerRequest req, HTTPServerResponse res) {
-            %s.update(req, res);
+            %sController.update(req, res);
         });
         router.delete_("/%s/:id", (HTTPServerRequest req, HTTPServerResponse res) {
-            %s.remove(req, res);
+            %sController.remove(req, res);
         });
     }
 }
@@ -295,15 +419,15 @@ class %sModule {
             moduleName,                    // передаём сервис в конструктор
             moduleName,                    // для комментария (имя модуля)
             moduleName,                    // маршрут для GET all
-            moduleName ~ "Controller",     // вызов getAll
+            moduleName, ModuleName,        // вызов getAll через контроллер
             moduleName,                    // маршрут для GET one
-            moduleName ~ "Controller",     // вызов getOne
+            moduleName, ModuleName,        // вызов getOne через контроллер
             moduleName,                    // маршрут для POST
-            moduleName ~ "Controller",     // вызов create
+            moduleName, ModuleName,        // вызов create через контроллер
             moduleName,                    // маршрут для PUT
-            moduleName ~ "Controller",     // вызов update
+            moduleName, ModuleName,        // вызов update через контроллер
             moduleName,                    // маршрут для DELETE
-            moduleName ~ "Controller"      // вызов remove
+            moduleName, ModuleName         // вызов remove через контроллер
         );
     }
     else if (templateType == "empty")
@@ -347,26 +471,26 @@ class %sModule {
     string appFile = buildPath(sourceDir, "app.d");
     string imports;
     string registrations;
-    // Используем SpanMode.depth, чтобы entry.name содержал относительный или абсолютный путь
     foreach (entry; dirEntries(sourceDir, SpanMode.depth))
     {
         if (!entry.isDir && entry.name.endsWith(".mod.d"))
         {
             writeln("Обрабатываем файл: ", entry.name);
             enum suffix = ".mod.d";
-            // Получаем имя родительской директории и имя файла через std.path.baseName
             string parentDir = baseName(dirName(entry.name));
             string fileName = baseName(entry.name);
-            // Удаляем суффикс .mod.d, чтобы получить базовое имя модуля
             string moduleBaseName = fileName[0 .. fileName.length - suffix.length];
 
             writeln("  Родительская директория: '", parentDir, "', базовое имя модуля: '", moduleBaseName, "'");
-            // Если имя родительской директории совпадает с базовым именем файла, считаем модуль валидным
-            if (parentDir == moduleBaseName)
+            if (parentDir == moduleBaseName || moduleBaseName == parentDir ~ ".ws")
             {
-                imports ~= format("import %s.%s.mod;\n", moduleBaseName, moduleBaseName);
-                string pascalName = toPascalCase(moduleBaseName);
-                registrations ~= format("    { auto %sModule = new %sModule(); %sModule.registerRoutes(router); }\n", toLower(pascalName), pascalName, toLower(pascalName),);
+                imports ~= format("import %s.%s.mod;\n", parentDir, moduleBaseName);
+                string className;
+                if (moduleBaseName.endsWith(".ws"))
+                    className = toPascalCase(moduleBaseName[0 .. moduleBaseName.length - 3]) ~ "WSModule";
+                else
+                    className = toPascalCase(moduleBaseName) ~ "Module";
+                registrations ~= format("    { auto %s = new %s(); %s.registerRoutes(router); }\n", toLower(className), className, toLower(className));
                 writeln("  Добавлен импорт для модуля: ", moduleBaseName);
             }
         }
@@ -383,22 +507,22 @@ module app;
 import vibe.vibe;
 %s
 
-    /// Инициализация приложения.
-    /// Здесь создаётся роутер и регистрируются маршруты сгенерированных модулей.
-    URLRouter init() {
-        auto router = new URLRouter;
-            %s
-        return router;
-    }
+/// Инициализация приложения.
+/// Здесь создаётся роутер и регистрируются маршруты сгенерированных модулей.
+URLRouter init() {
+    auto router = new URLRouter;
+%s
+    return router;
+}
 
-    void main() {
-        auto settings = new HTTPServerSettings;
-        settings.port = 8080;
-        auto router = init();
-        listenHTTP(settings, router);
-        runApplication();
-    }
-    }, imports, registrations);
+void main() {
+    auto settings = new HTTPServerSettings;
+    settings.port = 8080;
+    auto router = init();
+    listenHTTP(settings, router);
+    runApplication();
+}
+}, imports, registrations);
 
     write(appFile, appContent);
     writeln("Файл приложения создан: ", appFile);
